@@ -32,10 +32,12 @@ class MozcToRimeConverter:
         Initialize the converter.
         """
         self.entries = []
-        self.min_cost = float('inf')
-        self.max_cost = float('-inf')
+        self.min_cost = float("inf")
+        self.max_cost = float("-inf")
 
-    def parse_mozc_line(self, line: str) -> Optional[Tuple[str, str, int, int, int, str]]:
+    def parse_mozc_line(
+        self, line: str
+    ) -> Optional[Tuple[str, str, int, int, int, str]]:
         """
         Parse a line from Mozc dictionary.
 
@@ -48,10 +50,10 @@ class MozcToRimeConverter:
         line = line.strip()
 
         # Skip empty lines and comments
-        if not line or line.startswith('#'):
+        if not line or line.startswith("#"):
             return None
 
-        parts = line.split('\t')
+        parts = line.split("\t")
 
         # Mozc format: reading<tab>lid<tab>rid<tab>cost<tab>word
         if len(parts) != 5:
@@ -99,7 +101,7 @@ class MozcToRimeConverter:
         # Using exponential decay: weight = max_weight * exp(-k * cost)
         # Reference point: cost 3000 maps to high weight
         base_cost = 8192
-        decay_constant = 2/base_cost
+        decay_constant = 2 / base_cost
 
         weight = 128 * math.exp(-decay_constant * (cost - base_cost))
 
@@ -123,7 +125,7 @@ class MozcToRimeConverter:
         temp_entries = []
         count = 0
 
-        with open(filepath, 'r', encoding='utf-8') as f:
+        with open(filepath, "r", encoding="utf-8") as f:
             for line_num, line in enumerate(f, 1):
                 try:
                     result = self.parse_mozc_line(line)
@@ -132,7 +134,8 @@ class MozcToRimeConverter:
                         count += 1
                 except Exception as e:
                     print(
-                        f"Warning: Error parsing line {line_num}: {e}", file=sys.stderr)
+                        f"Warning: Error parsing line {line_num}: {e}", file=sys.stderr
+                    )
                     continue
 
         # Convert costs to weights and group by word+reading
@@ -151,9 +154,14 @@ class MozcToRimeConverter:
 
         return count
 
-    def generate_rime_dict(self, output_path: Path, dict_name: str,
-                           version: str = "LTS", sort: str = "by_weight",
-                           include_cost_comment: bool = False):
+    def generate_rime_dict(
+        self,
+        output_path: Path,
+        dict_name: str,
+        version: str = "LTS",
+        sort: str = "by_weight",
+        include_cost_comment: bool = False,
+    ):
         """
         Generate Rime dictionary file.
 
@@ -164,7 +172,7 @@ class MozcToRimeConverter:
             sort: Sort method ('by_weight' or 'original')
             include_cost_comment: Include original Mozc cost as comment
         """
-        with open(output_path, 'w', encoding='utf-8') as f:
+        with open(output_path, "w", encoding="utf-8") as f:
             # Write YAML header
             f.write("# Rime dictionary\n")
             f.write("# encoding: utf-8\n")
@@ -206,20 +214,20 @@ class MozcToRimeConverter:
         weights = [w for _, _, w, _ in self.entries]
 
         return {
-            'total_entries': len(self.entries),
-            'unique_words': len(set(w for w, _, _, _ in self.entries)),
-            'unique_readings': len(set(r for _, r, _, _ in self.entries)),
-            'min_weight': min(weights),
-            'max_weight': max(weights),
-            'avg_weight': sum(weights) / len(weights)
+            "total_entries": len(self.entries),
+            "unique_words": len(set(w for w, _, _, _ in self.entries)),
+            "unique_readings": len(set(r for _, r, _, _ in self.entries)),
+            "min_weight": min(weights),
+            "max_weight": max(weights),
+            "avg_weight": sum(weights) / len(weights),
         }
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Convert Google Mozc dictionary to Rime dictionary format',
+        description="Convert Google Mozc dictionary to Rime dictionary format",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog='''
+        epilog="""
 Examples:
   %(prog)s dictionary00.txt -o rime_dict.dict.yaml
   %(prog)s dictionary00.txt -o rime_dict.dict.yaml -n my_dict
@@ -244,24 +252,49 @@ Conversion method:
   Uses exponential decay to convert Mozc cost (lower=better) to Rime weight (higher=better).
   This respects the logarithmic nature of language model costs.
   Entries with same word+reading are merged by summing their weights.
-        '''
+        """,
     )
 
-    parser.add_argument('input', type=str,
-                        help='Input Mozc dictionary file (TSV format)')
-    parser.add_argument('-o', '--output', type=str, required=True,
-                        help='Output Rime dictionary file (.dict.yaml)')
-    parser.add_argument('-n', '--name', type=str, default=None,
-                        help='Dictionary name (default: derived from filename)')
-    parser.add_argument('-v', '--version', type=str, default='LTS',
-                        help='Dictionary version (default: LTS)')
-    parser.add_argument('-s', '--sort', type=str, default='by_weight',
-                        choices=['by_weight', 'original'],
-                        help='Sort method (default: by_weight)')
-    parser.add_argument('--include-cost', action='store_true',
-                        help='Include original Mozc cost as comment in output')
-    parser.add_argument('--stats', action='store_true',
-                        help='Show statistics after conversion')
+    parser.add_argument(
+        "input", type=str, help="Input Mozc dictionary file (TSV format)"
+    )
+    parser.add_argument(
+        "-o",
+        "--output",
+        type=str,
+        required=True,
+        help="Output Rime dictionary file (.dict.yaml)",
+    )
+    parser.add_argument(
+        "-n",
+        "--name",
+        type=str,
+        default=None,
+        help="Dictionary name (default: derived from filename)",
+    )
+    parser.add_argument(
+        "-v",
+        "--version",
+        type=str,
+        default="LTS",
+        help="Dictionary version (default: LTS)",
+    )
+    parser.add_argument(
+        "-s",
+        "--sort",
+        type=str,
+        default="by_weight",
+        choices=["by_weight", "original"],
+        help="Sort method (default: by_weight)",
+    )
+    parser.add_argument(
+        "--include-cost",
+        action="store_true",
+        help="Include original Mozc cost as comment in output",
+    )
+    parser.add_argument(
+        "--stats", action="store_true", help="Show statistics after conversion"
+    )
 
     args = parser.parse_args()
 
@@ -278,7 +311,7 @@ Conversion method:
     if not dict_name:
         # Use filename without extension
         dict_name = output_path.stem
-        if dict_name.endswith('.dict'):
+        if dict_name.endswith(".dict"):
             dict_name = dict_name[:-5]
 
     # Convert
@@ -293,8 +326,7 @@ Conversion method:
         # Load Mozc dictionary
         count = converter.load_mozc_dict(input_path)
         print(f"Loaded {count} raw entries from Mozc dictionary")
-        print(
-            f"Merged into {len(converter.entries)} unique word+reading combinations")
+        print(f"Merged into {len(converter.entries)} unique word+reading combinations")
 
         if len(converter.entries) == 0:
             print("Warning: No valid entries found in input file", file=sys.stderr)
@@ -306,21 +338,22 @@ Conversion method:
             dict_name,
             version=args.version,
             sort=args.sort,
-            include_cost_comment=args.include_cost
+            include_cost_comment=args.include_cost,
         )
         print(f"Successfully created Rime dictionary: {output_path}")
 
         # Show statistics
         if args.stats:
             stats = converter.get_statistics()
-            print("\n" + "="*60)
+            print("\n" + "=" * 60)
             print("Conversion Statistics:")
-            print("="*60)
+            print("=" * 60)
             print(f"Total entries: {stats['total_entries']}")
             print(f"Unique words: {stats['unique_words']}")
             print(f"Unique readings: {stats['unique_readings']}")
             print(
-                f"Weight range: {stats['min_weight']:.2f} - {stats['max_weight']:.2f}")
+                f"Weight range: {stats['min_weight']:.2f} - {stats['max_weight']:.2f}"
+            )
             print(f"Average weight: {stats['avg_weight']:.2f}")
 
         print("\nConversion completed successfully!")
@@ -329,6 +362,7 @@ Conversion method:
     except Exception as e:
         print(f"Error during conversion: {e}", file=sys.stderr)
         import traceback
+
         traceback.print_exc()
         sys.exit(1)
 
