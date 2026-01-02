@@ -19,10 +19,12 @@ Rime format (YAML + TSV):
   word<tab>reading<tab>weight
 """
 
+import os
 import sys
 import argparse
 import re
 import llm
+import json
 from pathlib import Path
 from typing import Tuple, Optional, Callable, List, Dict
 from collections import defaultdict
@@ -34,6 +36,7 @@ class BNCToRimeConverter:
 
     def __init__(
         self,
+        tmp_dir,
         code_function: Optional[
             Callable[[List[str]], Dict[str, str]]
         ] = None,
@@ -48,6 +51,7 @@ class BNCToRimeConverter:
                           If None, a placeholder function will be used
         """
         self.entries = []
+        self.tmp_dir = tmp_dir
         self.code_function = (
             code_function or self._default_code_function
         )
@@ -95,7 +99,7 @@ class BNCToRimeConverter:
         return word
 
     def _default_code_function(
-        self, words: List[str]
+        self, words: List[str], start: int, end: int
     ) -> Dict[str, str]:
         """
         Default placeholder function for converting words to input codes.
@@ -107,7 +111,29 @@ class BNCToRimeConverter:
         Returns:
             Dictionary mapping each word to its input code
         """
-        return llm.devide(words)
+        if all(word in self.tmp_dict for word in words):
+            print(f"Using cache: {str(start)}-{str(end)}")
+            return {word: self.tmp_dict[word] for word in words}
+
+        try:
+            result = llm.devide(words)
+        except Exception as e:
+            print(f"Warning: {e}")
+            mid = len(words) // 2
+            print(f"Deal {str(start)}-{str(start+mid)}")
+            left = self.code_function(words[:mid], start, start + mid)
+            print(f"Deal {str(start+mid)}-{str(end)}")
+            right = self.code_function(words[mid:], start + mid, end)
+            result = left | right
+
+        with open(
+            os.path.join(
+                self.tmp_dir, f"{str(start)}-{str(end)}.json"
+            ),
+            "w",
+        ) as file:
+            json.dump(result, file)
+        return result
 
     def parse_bnc_line(
         self, line: str
@@ -149,7 +175,7 @@ class BNCToRimeConverter:
             return None
 
     def load_bnc_list(
-        self, filepath: Path, batch_size: int = 512
+        self, filepath: Path, batch_size: int = 1024
     ) -> int:
         """
         Load BNC frequency list file.
@@ -210,19 +236,24 @@ class BNCToRimeConverter:
             f"Processing {len(words_to_process)} words in batches of {batch_size}..."
         )
 
+        # Load tmp files
+        self.tmp_dict = {}
+        # Iterate over each file in the directory
+        for filename in os.listdir(self.tmp_dir):
+            if filename.endswith(".json"):
+                filepath = os.path.join(self.tmp_dir, filename)
+            # Read and load the JSON file
+            with open(filepath, "r") as file:
+                data = json.load(file)
+                # Merge the data (assuming you're merging dictionaries)
+                self.tmp_dict.update(data)
+
         for i in range(0, len(words_to_process), batch_size):
             batch = words_to_process[i : i + batch_size]
 
-            # Get input codes for this batch
-            try:
-                code_mapping = self.code_function(batch)
-            except Exception as e:
-                print(
-                    f"Warning: Error generating codes for batch {i//batch_size + 1}: {e}",
-                    file=sys.stderr,
-                )
-                # Use default fallback for this batch
-                code_mapping = self._default_code_function(batch)
+            code_mapping = self.code_function(
+                batch, i, i + batch_size
+            )
 
             # Store entries
             for word in batch:
@@ -364,13 +395,20 @@ Conversion method:
         "-b",
         "--batch-size",
         type=int,
-        default=512,
-        help="Batch size for processing words (default: 512)",
+        default=1024,
+        help="Batch size for processing words (default: 1024)",
     )
     parser.add_argument(
         "--stats",
         action="store_true",
         help="Show statistics after conversion",
+    )
+    parser.add_argument(
+        "-t",
+        "--tmp-dir",
+        type=str,
+        default="/tmp",
+        help="Temporary directory to save LLM generated syllable dictionaries.",
     )
 
     args = parser.parse_args()
@@ -400,9 +438,7 @@ Conversion method:
     print(f"Dictionary name: {dict_name}")
     print()
 
-    # TODO: Replace with your actual batch code conversion function
-    # Example: converter = BNCToRimeConverter(code_function=my_batch_pinyin_function)
-    converter = BNCToRimeConverter()
+    converter = BNCToRimeConverter(args.tmp_dir)
 
     try:
         # Load BNC frequency list
