@@ -1,8 +1,9 @@
 import os
 from openai import OpenAI
+from typing import List, Dict
 
 
-def devide(word: str) -> str:
+def devide(word_list: List[str]) -> Dict[str, str]:
 
     client = OpenAI(
         api_key=os.environ.get("DEEPSEEK_API_KEY"),
@@ -14,8 +15,10 @@ def devide(word: str) -> str:
         messages=[
             {
                 "role": "system",
-                "content": "You are a language expert who divides English words into syllables. Given an English word, return the word's syllables in the correct order, separated by spaces."
-                + "Note: the only thing you can do is insert spaces."
+                "content": "You are a language expert who divides English words into syllables.\n"
+                + "Given an English word, return the word's syllables in the correct order, separated by spaces.\n"
+                + "The input is a word list, each line is a word. Your reply should has exact same line number.\n"
+                + "Note: the only thing you can do is to insert spaces.\n"
                 + """
 ### Examples:
 Input:
@@ -46,13 +49,21 @@ large _ lan guage _ mod le
             },
             {
                 "role": "user",
-                "content": word,
+                "content": "\n".join(word_list),
             },
         ],
         stream=False,
     )
 
-    if not all(c.isalpha() or c in "-_' " for c in word):
-        return "!"
+    result = response.choices[0].message.content
+    result = result.split("\n")
 
-    return response.choices[0].message.content
+    if len(result) != len(word_list):
+        raise Exception(
+            f"Input length: {len(word_list)}, output length: {len(result)}"
+        )
+    for index, word in enumerate(word_list):
+        if not all((c.isalpha() or c in "-_' " for c in word)):
+            word_list[index] = "!"
+
+    return dict(zip(word_list, result))

@@ -24,7 +24,7 @@ import argparse
 import re
 import llm
 from pathlib import Path
-from typing import Tuple, Optional, Callable
+from typing import Tuple, Optional, Callable, List, Dict
 from collections import defaultdict
 
 
@@ -33,13 +33,18 @@ class BNCToRimeConverter:
     EXTRACT_PATTERN = re.compile(r"[a-z]+")
 
     def __init__(
-        self, code_function: Optional[Callable[[str], str]] = None
+        self,
+        code_function: Optional[
+            Callable[[List[str]], Dict[str, str]]
+        ] = None,
     ):
         """
         Initialize the converter.
 
         Args:
-            code_function: Function to convert word to Rime input code
+            code_function: Function to convert a list of words to Rime input codes
+                          Takes: List[str] (words)
+                          Returns: Dict[str, str] (word -> code mapping)
                           If None, a placeholder function will be used
         """
         self.entries = []
@@ -89,19 +94,20 @@ class BNCToRimeConverter:
 
         return word
 
-    def _default_code_function(self, word: str) -> str:
+    def _default_code_function(
+        self, words: List[str]
+    ) -> Dict[str, str]:
         """
-        Default placeholder function for converting word to input code.
-        Currently returns the word itself as lowercase.
-        Replace this with your actual conversion function.
+        Default placeholder function for converting words to input codes.
+        Processes a batch of words at once.
 
         Args:
-            word: The word to convert
+            words: List of words to convert
 
         Returns:
-            Input code for the word
+            Dictionary mapping each word to its input code
         """
-        return llm.devide(word)
+        return llm.devide(words)
 
     def parse_bnc_line(
         self, line: str
@@ -142,7 +148,9 @@ class BNCToRimeConverter:
         except (ValueError, IndexError):
             return None
 
-    def load_bnc_list(self, filepath: Path) -> int:
+    def load_bnc_list(
+        self, filepath: Path, batch_size: int = 512
+    ) -> int:
         """
         Load BNC frequency list file.
         Merges entries with same word but different POS by summing frequencies.
@@ -151,6 +159,7 @@ class BNCToRimeConverter:
 
         Args:
             filepath: Path to BNC frequency list file
+            batch_size: Number of words to process in each batch
 
         Returns:
             Number of raw entries loaded
@@ -180,33 +189,51 @@ class BNCToRimeConverter:
                     )
                     continue
 
-        # Merge entries: sum frequencies for same word
-        for normalized_word, freq_pos_list in word_freq_dict.items():
+        # Collect words that pass frequency filter
+        words_to_process = []
+        word_to_freq = {}
 
+        for normalized_word, freq_pos_list in word_freq_dict.items():
             # Sum all frequencies for this word
             total_frequency = sum(freq for freq, _ in freq_pos_list)
 
+            # Filter long, rare words
             if len(normalized_word) > 8 and total_frequency < 5:
                 self.filtered_count += 1
                 continue
 
-            # Get input code for this word
+            words_to_process.append(normalized_word)
+            word_to_freq[normalized_word] = total_frequency
+
+        # Process words in batches
+        print(
+            f"Processing {len(words_to_process)} words in batches of {batch_size}..."
+        )
+
+        for i in range(0, len(words_to_process), batch_size):
+            batch = words_to_process[i : i + batch_size]
+
+            # Get input codes for this batch
             try:
-                code = self.code_function(normalized_word)
+                code_mapping = self.code_function(batch)
             except Exception as e:
                 print(
-                    f"Warning: Error generating code for word '{normalized_word}': {e}",
+                    f"Warning: Error generating codes for batch {i//batch_size + 1}: {e}",
                     file=sys.stderr,
                 )
-                # Use default fallback
-                code = self._default_code_function(normalized_word)
+                # Use default fallback for this batch
+                code_mapping = self._default_code_function(batch)
 
-            print(len(self.entries))
+            # Store entries
+            for word in batch:
+                code = code_mapping.get(word, word.lower())
+                weight = word_to_freq[word]
+                self.entries.append((word, code, weight))
 
-            # Store: (word, code, weight)
-            # Using frequency directly as weight (higher frequency = higher weight)
-            self.entries.append(
-                (normalized_word, code, total_frequency)
+            # Progress indicator
+            processed = min(i + batch_size, len(words_to_process))
+            print(
+                f"Processed {processed}/{len(words_to_process)} words"
             )
 
         self.entries.sort()
@@ -276,7 +303,7 @@ def main():
 Examples:
   %(prog)s bnc_freq.txt -o rime_dict.dict.yaml
   %(prog)s bnc_freq.txt -o rime_dict.dict.yaml -n english_dict
-  %(prog)s bnc_freq.txt -o rime_dict.dict.yaml --stats
+  %(prog)s bnc_freq.txt -o rime_dict.dict.yaml --stats --batch-size 500
 
 BNC format (space-separated):
   frequency word pos file_count
@@ -297,7 +324,7 @@ Conversion method:
   - Words with different POS tags are merged into one entry
   - Frequencies are summed for the same word
   - The frequency is used directly as weight in Rime
-  - A code_function is used to convert words to input codes (customize as needed)
+  - A code_function is used to convert words to input codes in batches
         """,
     )
 
@@ -334,6 +361,13 @@ Conversion method:
         help="Sort method (default: by_weight)",
     )
     parser.add_argument(
+        "-b",
+        "--batch-size",
+        type=int,
+        default=512,
+        help="Batch size for processing words (default: 512)",
+    )
+    parser.add_argument(
         "--stats",
         action="store_true",
         help="Show statistics after conversion",
@@ -366,14 +400,16 @@ Conversion method:
     print(f"Dictionary name: {dict_name}")
     print()
 
-    # TODO: Replace with your actual code conversion function
-    # Example: converter = BNCToRimeConverter(code_function=my_pinyin_function)
+    # TODO: Replace with your actual batch code conversion function
+    # Example: converter = BNCToRimeConverter(code_function=my_batch_pinyin_function)
     converter = BNCToRimeConverter()
 
     try:
         # Load BNC frequency list
-        count = converter.load_bnc_list(input_path)
-        print(f"Loaded {count} raw entries from BNC frequency list")
+        count = converter.load_bnc_list(
+            input_path, batch_size=args.batch_size
+        )
+        print(f"\nLoaded {count} raw entries from BNC frequency list")
         print(
             f"Filtered out {converter.filtered_count} words with invalid characters"
         )
@@ -418,10 +454,10 @@ Conversion method:
         print("      - Characters -_' cannot be at the beginning")
         print("      - Characters -_' cannot appear consecutively")
         print(
-            "      The default code function uses the normalized word as code."
+            "      The default code function processes words in batches."
         )
         print(
-            "      Modify the code_function parameter to use your custom conversion."
+            "      Modify the code_function parameter to use your custom batch conversion."
         )
         print(
             "Remember to deploy your Rime input method to use the new dictionary."
