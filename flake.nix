@@ -18,6 +18,7 @@
 
         python-pkgs =
           ps: with ps; [
+            openai
           ];
         python-env = pkgs.python3.withPackages python-pkgs;
 

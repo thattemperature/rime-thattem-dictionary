@@ -22,6 +22,7 @@ Rime format (YAML + TSV):
 import sys
 import argparse
 import re
+import llm
 from pathlib import Path
 from typing import Tuple, Optional, Callable
 from collections import defaultdict
@@ -31,7 +32,9 @@ class BNCToRimeConverter:
     # Pattern to extract [a-z]+ core from words
     EXTRACT_PATTERN = re.compile(r"[a-z]+")
 
-    def __init__(self, code_function: Optional[Callable[[str], str]] = None):
+    def __init__(
+        self, code_function: Optional[Callable[[str], str]] = None
+    ):
         """
         Initialize the converter.
 
@@ -40,7 +43,9 @@ class BNCToRimeConverter:
                           If None, a placeholder function will be used
         """
         self.entries = []
-        self.code_function = code_function or self._default_code_function
+        self.code_function = (
+            code_function or self._default_code_function
+        )
         self.filtered_count = 0  # Track number of filtered words
 
     def _normalize_word(self, word: str) -> Optional[str]:
@@ -58,17 +63,29 @@ class BNCToRimeConverter:
         """
         if not all(c.isalpha() or c in "-_'" for c in word):
             match = self.EXTRACT_PATTERN.search(word)
-            return match.group(0) if match else None
+            if match:
+                return match.group(0)
+            self.filtered_count += 1
+            return None
 
         if word and word[0] in "-_'":
             match = self.EXTRACT_PATTERN.search(word)
-            return match.group(0) if match else None
+            if match:
+                return match.group(0)
+            self.filtered_count += 1
+            return None
 
         special_chars = "-_'"
         for i in range(len(word) - 1):
-            if word[i] in special_chars and word[i + 1] in special_chars:
+            if (
+                word[i] in special_chars
+                and word[i + 1] in special_chars
+            ):
                 match = self.EXTRACT_PATTERN.search(word)
-                return match.group(0) if match else None
+                if match:
+                    return match.group(0)
+                self.filtered_count += 1
+                return None
 
         return word
 
@@ -84,15 +101,11 @@ class BNCToRimeConverter:
         Returns:
             Input code for the word
         """
-        # TODO: Replace with actual code conversion function
-        # Examples of what this could be:
-        # - Pinyin for Chinese characters
-        # - Romanization for other scripts
-        # - Phonetic representation
-        # - Custom encoding scheme
-        return word.lower()
+        return llm.devide(word)
 
-    def parse_bnc_line(self, line: str) -> Optional[Tuple[int, str, str, int]]:
+    def parse_bnc_line(
+        self, line: str
+    ) -> Optional[Tuple[int, str, str, int]]:
         """
         Parse a line from BNC frequency list.
 
@@ -133,6 +146,8 @@ class BNCToRimeConverter:
         """
         Load BNC frequency list file.
         Merges entries with same word but different POS by summing frequencies.
+        Words are normalized and validated; invalid words are filtered out
+        and counted in self.filtered_count.
 
         Args:
             filepath: Path to BNC frequency list file
@@ -150,15 +165,18 @@ class BNCToRimeConverter:
                 try:
                     result = self.parse_bnc_line(line)
                     if result:
-                        frequency, word, pos, file_count = result
+                        frequency, word, pos, _ = result
                         # Normalize and validate word
                         normalized_word = self._normalize_word(word)
                         if normalized_word is not None:
-                            word_freq_dict[normalized_word].append((frequency, pos))
+                            word_freq_dict[normalized_word].append(
+                                (frequency, pos)
+                            )
                             count += 1
                 except Exception as e:
                     print(
-                        f"Warning: Error parsing line {line_num}: {e}", file=sys.stderr
+                        f"Warning: Error parsing line {line_num}: {e}",
+                        file=sys.stderr,
                     )
                     continue
 
@@ -167,6 +185,10 @@ class BNCToRimeConverter:
 
             # Sum all frequencies for this word
             total_frequency = sum(freq for freq, _ in freq_pos_list)
+
+            if len(normalized_word) > 8 and total_frequency < 5:
+                self.filtered_count += 1
+                continue
 
             # Get input code for this word
             try:
@@ -179,9 +201,13 @@ class BNCToRimeConverter:
                 # Use default fallback
                 code = self._default_code_function(normalized_word)
 
+            print(len(self.entries))
+
             # Store: (word, code, weight)
             # Using frequency directly as weight (higher frequency = higher weight)
-            self.entries.append((normalized_word, code, total_frequency))
+            self.entries.append(
+                (normalized_word, code, total_frequency)
+            )
 
         self.entries.sort()
         return count
@@ -275,7 +301,9 @@ Conversion method:
         """,
     )
 
-    parser.add_argument("input", type=str, help="Input BNC frequency list file")
+    parser.add_argument(
+        "input", type=str, help="Input BNC frequency list file"
+    )
     parser.add_argument(
         "-o",
         "--output",
@@ -306,7 +334,9 @@ Conversion method:
         help="Sort method (default: by_weight)",
     )
     parser.add_argument(
-        "--stats", action="store_true", help="Show statistics after conversion"
+        "--stats",
+        action="store_true",
+        help="Show statistics after conversion",
     )
 
     args = parser.parse_args()
@@ -314,7 +344,10 @@ Conversion method:
     # Validate paths
     input_path = Path(args.input)
     if not input_path.exists():
-        print(f"Error: Input file '{input_path}' not found.", file=sys.stderr)
+        print(
+            f"Error: Input file '{input_path}' not found.",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     output_path = Path(args.output)
@@ -341,11 +374,16 @@ Conversion method:
         # Load BNC frequency list
         count = converter.load_bnc_list(input_path)
         print(f"Loaded {count} raw entries from BNC frequency list")
-        print(f"Filtered out {converter.filtered_count} words with invalid characters")
+        print(
+            f"Filtered out {converter.filtered_count} words with invalid characters"
+        )
         print(f"Merged into {len(converter.entries)} unique words")
 
         if len(converter.entries) == 0:
-            print("Warning: No valid entries found in input file", file=sys.stderr)
+            print(
+                "Warning: No valid entries found in input file",
+                file=sys.stderr,
+            )
             sys.exit(1)
 
         # Generate Rime dictionary
@@ -366,18 +404,28 @@ Conversion method:
             print(f"Total entries: {stats['total_entries']}")
             print(f"Unique words: {stats['unique_words']}")
             print(f"Unique codes: {stats['unique_codes']}")
-            print(f"Weight range: {stats['min_weight']} - {stats['max_weight']}")
+            print(
+                f"Weight range: {stats['min_weight']} - {stats['max_weight']}"
+            )
             print(f"Average weight: {stats['avg_weight']:.2f}")
             print(f"Total frequency: {stats['total_frequency']}")
 
         print("\nConversion completed successfully!")
         print("NOTE: Words are normalized according to these rules:")
-        print("      - Extract [a-z]+ core from words with surrounding characters")
+        print(
+            "      - Extract [a-z]+ core from words with surrounding characters"
+        )
         print("      - Characters -_' cannot be at the beginning")
         print("      - Characters -_' cannot appear consecutively")
-        print("      The default code function uses the normalized word as code.")
-        print("      Modify the code_function parameter to use your custom conversion.")
-        print("Remember to deploy your Rime input method to use the new dictionary.")
+        print(
+            "      The default code function uses the normalized word as code."
+        )
+        print(
+            "      Modify the code_function parameter to use your custom conversion."
+        )
+        print(
+            "Remember to deploy your Rime input method to use the new dictionary."
+        )
 
     except Exception as e:
         print(f"Error during conversion: {e}", file=sys.stderr)
